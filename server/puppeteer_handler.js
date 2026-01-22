@@ -11,6 +11,58 @@ const USER_DATA_DIR = path.join(__dirname, 'user_data');
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Robust Loop-based Wait Function
+ * Monitors the text content of a selector. If the length remains constant for `stabilityDuration`,
+ * it assumes the response is complete.
+ */
+async function waitForResponseStability(page, resultSelector, minLength = 10, stabilityDuration = 3000, maxWait = 90000) {
+    let stableCount = 6; // Check count (e.g. 6 * 500ms = 3 sec)
+    let lastLength = 0;
+
+    const startTime = Date.now();
+
+    // Initial wait for the element to appear
+    try {
+        await page.waitForSelector(resultSelector, { timeout: 20000 });
+    } catch (e) {
+        console.log(`[Wait] Selector ${resultSelector} not found within 20s.`);
+        return null;
+    }
+
+    while (Date.now() - startTime < maxWait) {
+        const payload = await page.evaluate((sel) => {
+            const els = document.querySelectorAll(sel);
+            if (els.length === 0) return { length: 0, text: "" };
+            // Usually the last element is the active response
+            const target = els[els.length - 1];
+            return { length: target.innerText.length, text: target.innerText };
+        }, resultSelector);
+
+        if (payload.length > minLength) {
+            if (payload.length === lastLength) {
+                stableCount--;
+            } else {
+                stableCount = 6; // Reset if text is growing
+                lastLength = payload.length;
+            }
+        }
+
+        if (stableCount <= 0) {
+            return payload.text; // Response is stable
+        }
+
+        await delay(500); // Poll every 500ms
+    }
+
+    console.log(`[Wait] Stability timeout for ${resultSelector}`);
+    // Return whatever we have so far
+    return await page.evaluate((sel) => {
+        const els = document.querySelectorAll(sel);
+        return els.length > 0 ? els[els.length - 1].innerText : "Timeout - Partial Response";
+    }, resultSelector);
+}
+
 export async function runExhaustiveAnalysis(prompt, onProgress) {
     let browser;
     try {
@@ -33,6 +85,8 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
         onProgress({ status: 'step1_gathering', message: '각 AI로부터 초기 답변을 수집하고 있습니다...' });
 
         const initialResults = [];
+
+        // Parallel Execution is possible but risky for anti-bot. Sequential is safer for reliability.
         initialResults.push({ name: 'Perplexity', text: await runPerplexity(browser, prompt).catch(e => `Error: ${e.message}`) });
         onProgress({ status: 'perplexity_done', message: 'Perplexity 답변 수집 완료' });
 
@@ -56,13 +110,12 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
         ${combinedInitial}
         `.substring(0, 15000);
 
-        // We use Claude for high-quality reasoning/review if available, or Perplexity
         onProgress({ status: 'validating', message: '답변들의 논리적 모순과 누락된 정보를 비교 분석 중...' });
-        // We use Claude for high-quality reasoning/review if available, or Perplexity
-        onProgress({ status: 'validating', message: '답변들의 논리적 모순과 누락된 정보를 비교 분석 중...' });
+
+        // Try Claude first for validation
         let validationReview = await runClaude(browser, validationPrompt).catch(() => null);
 
-        if (!validationReview || validationReview.includes("Error") || validationReview.includes("No response")) {
+        if (!validationReview || validationReview.includes("Error") || validationReview.length < 50) {
             onProgress({ status: 'validating_fallback', message: 'Claude 검증 실패, Perplexity로 상호 검증을 시도합니다...' });
             validationReview = await runPerplexity(browser, validationPrompt).catch(() => "상호 검증 리포트를 생성할 수 없습니다.");
         }
@@ -113,19 +166,29 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
 async function runPerplexity(browser, prompt) {
     const page = await browser.newPage();
     try {
-        await page.goto('https://www.perplexity.ai/', { waitUntil: 'load', timeout: 60000 });
+        await page.goto('https://www.perplexity.ai/', { waitUntil: 'networkidle2', timeout: 60000 });
         const inputSelector = 'textarea, [contenteditable="true"]';
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
-        await page.focus(inputSelector);
-        await page.keyboard.type(prompt);
-        await delay(500);
-        await page.keyboard.press('Enter');
-        await delay(12000);
-        return await page.evaluate(() => {
-            const prose = document.querySelector('.prose');
-            if (prose && prose.innerText.length > 50) return prose.innerText;
-            return document.body.innerText.substring(0, 2000);
-        });
+
+        // More robust input handling
+        try {
+            await page.waitForSelector(inputSelector, { timeout: 15000 });
+            await page.focus(inputSelector);
+            await page.evaluate((p) => {
+                const el = document.querySelector('textarea, [contenteditable="true"]');
+                if (el.tagName === 'TEXTAREA') el.value = p;
+                else el.innerText = p;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }, prompt);
+            await delay(1000);
+            await page.keyboard.press('Enter');
+        } catch (e) {
+            console.error("Perplexity Input Error", e);
+            return "Input Failed";
+        }
+
+        // Loop wait for .prose
+        return await waitForResponseStability(page, '.prose', 20);
+
     } finally { await page.close(); }
 }
 
@@ -134,16 +197,30 @@ async function runChatGPT(browser, prompt) {
     try {
         await page.goto('https://chatgpt.com/', { waitUntil: 'load', timeout: 60000 });
         const inputSelector = '#prompt-textarea';
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
-        await page.focus(inputSelector);
-        await page.keyboard.type(prompt);
-        await delay(500);
-        await page.keyboard.press('Enter');
-        await delay(15000);
-        return await page.evaluate(() => {
-            const markdowns = Array.from(document.querySelectorAll('.markdown'));
-            return markdowns.length > 0 ? markdowns[markdowns.length - 1].innerText : "No response";
-        });
+
+        try {
+            await page.waitForSelector(inputSelector, { timeout: 15000 });
+            await page.focus(inputSelector);
+            await page.keyboard.type(prompt.substring(0, 2000)); // Limit length for speed
+            if (prompt.length > 2000) {
+                await page.evaluate((p) => {
+                    const el = document.querySelector('#prompt-textarea');
+                    el.innerText += p.substring(2000);
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }, prompt);
+            }
+            await delay(500);
+            await page.keyboard.press('Enter');
+        } catch (e) {
+            console.error("ChatGPT Input Error", e);
+            return "Input Failed";
+        }
+
+        // ChatGPT often puts answer in .markdown or article
+        // Using multiple selectors to be safe
+        const resultSelector = '.markdown';
+        return await waitForResponseStability(page, resultSelector, 20);
+
     } finally { await page.close(); }
 }
 
@@ -151,28 +228,25 @@ async function runGemini(browser, prompt) {
     const page = await browser.newPage();
     try {
         await page.goto('https://gemini.google.com/app', { waitUntil: 'networkidle2', timeout: 60000 });
-        const inputSelector = 'div[contenteditable="true"], div[aria-label="채팅 입력"], .input-area textarea';
-        await page.waitForSelector(inputSelector, { timeout: 20000 });
-        await page.focus(inputSelector);
-        await page.keyboard.type(prompt);
-        await delay(500);
-        await page.keyboard.press('Enter');
 
-        // Wait for response to start and finish
-        await delay(3000); // Give it time to start
-        await page.waitForFunction(() => {
-            const lastResponse = document.querySelector('model-response');
-            return lastResponse && !lastResponse.classList.contains('p-is-responding');
-        }, { timeout: 45000 }).catch(() => console.log("Gemini: Wait ended or timed out"));
+        // Gemini often has 'Get started' splash or simple input
+        const inputSelector = 'div[contenteditable="true"], .input-area textarea';
 
-        await delay(2000);
-        return await page.evaluate(() => {
-            const responses = Array.from(document.querySelectorAll('model-response'));
-            if (responses.length === 0) return "No response found";
-            const last = responses[responses.length - 1];
-            // Remove citations or extra garbage if needed
-            return last.innerText.trim();
-        });
+        try {
+            await page.waitForSelector(inputSelector, { timeout: 15000 });
+            await page.focus(inputSelector);
+            // Used clipboard or direct type? Direct type is safer for complex RichText editors
+            await page.keyboard.type(prompt);
+            await delay(1000);
+            await page.keyboard.press('Enter');
+        } catch (e) {
+            console.error("Gemini Input Error", e);
+            return "Input Failed";
+        }
+
+        // Gemini response container
+        return await waitForResponseStability(page, 'model-response', 20);
+
     } finally { await page.close(); }
 }
 
@@ -180,30 +254,113 @@ async function runClaude(browser, prompt) {
     const page = await browser.newPage();
     try {
         await page.goto('https://claude.ai/new', { waitUntil: 'networkidle2', timeout: 60000 });
-        const inputSelector = 'div[contenteditable="true"], [aria-label="Write user message"], .ProseMirror';
-        await page.waitForSelector(inputSelector, { timeout: 20000 });
-        await page.focus(inputSelector);
-        await page.keyboard.type(prompt);
-        await delay(500);
-        await page.keyboard.press('Enter');
+        const inputSelector = 'div[contenteditable="true"]';
 
-        // Wait for stop button to disappear or text to stabilize
-        await delay(5000);
-        await page.waitForFunction(() => {
-            const stopButton = document.querySelector('button[aria-label="Stop Response"], button[aria-label="Stop generating"]');
-            return !stopButton;
-        }, { timeout: 45000 }).catch(() => console.log("Claude: Wait for stop button timed out"));
+        try {
+            await page.waitForSelector(inputSelector, { timeout: 20000 });
+            await page.focus(inputSelector);
+            await page.keyboard.type(prompt);
+            await delay(1000);
 
-        await delay(2000);
-        return await page.evaluate(() => {
-            // Claude often uses font-claude-message or specific div depth
-            const messages = Array.from(document.querySelectorAll('.font-claude-message, [data-testid="message-content"], .grid-cols-1.gap-y-4'));
-            if (messages.length === 0) {
-                // Fallback: search for the last message by text content 
-                const allBodyText = document.body.innerText;
-                return allBodyText.length > 500 ? "Claude response extraction fallback needed" : "No response found";
-            }
-            return messages[messages.length - 1].innerText.trim();
-        });
+            // Check if send button is explicitly needed
+            const sent = await page.evaluate(() => {
+                const btn = document.querySelector('button[aria-label="Send Message"]');
+                if (btn && !btn.disabled) {
+                    btn.click();
+                    return true;
+                }
+                return false;
+            });
+            if (!sent) await page.keyboard.press('Enter');
+
+        } catch (e) {
+            console.error("Claude Input Error", e);
+            return "Input Failed";
+        }
+
+        // Claude response in .font-claude-message
+        return await waitForResponseStability(page, '.font-claude-message', 20);
+
     } finally { await page.close(); }
+}
+
+/**
+ * Browser-based Notion Automation
+ * Saves the analysis result to Notion by simulating UI interactions.
+ */
+export async function saveToNotion(prompt, optimalAnswer, results) {
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: false,
+            userDataDir: USER_DATA_DIR,
+            executablePath: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+            defaultViewport: null,
+            args: ['--start-maximized']
+        });
+
+        const page = await browser.newPage();
+        const notionUrl = process.env.NOTION_URL || "https://www.notion.so/";
+
+        await page.goto(notionUrl, { waitUntil: 'networkidle2' });
+
+        // Wait for Notion to load (checking for sidebar or specific element)
+        await page.waitForSelector('.notion-sidebar-container', { timeout: 30000 }).catch(() => {
+            console.log("Notion Sidebar not found. Maybe not logged in?");
+        });
+
+        // 1. Create New Page (Usually a '+' button or 'New' button)
+        // This is tricky as Notion's UI changes. A common way is to use the Quick Search or New Page shortcut 'Ctrl+N'
+        await page.keyboard.down('Control');
+        await page.keyboard.press('n');
+        await page.keyboard.up('Control');
+        await delay(2000);
+
+        // 2. Type Title
+        const titleContent = `[AI분석] ${prompt.substring(0, 40)}...`;
+        await page.keyboard.type(titleContent);
+        await page.keyboard.press('Enter');
+        await delay(1000);
+
+        // 3. Construct Markdown Content
+        let markdown = `# AI Search Analysis Report\n\n`;
+        markdown += `## Original Prompt\n> ${prompt}\n\n`;
+        markdown += `--- \n\n`;
+        markdown += `## 🤖 AI Agency Synthesis Result\n\n${optimalAnswer}\n\n`;
+        markdown += `--- \n\n`;
+        markdown += `## 📊 Individual AI Responses\n\n`;
+
+        for (const [ai, text] of Object.entries(results)) {
+            markdown += `### ${ai.toUpperCase()}\n${text}\n\n`;
+        }
+
+        // 4. Paste Content
+        // Notion supports markdown pasting. We'll use the clipboard if possible, 
+        // but for robustness in Puppeteer, we can use the page.evaluate with clipboard API or just type.
+        // Typing is slow. Let's try to set clipboard and paste.
+
+        await page.evaluate((text) => {
+            const el = document.createElement('textarea');
+            el.value = text;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+        }, markdown);
+
+        await page.keyboard.down('Control');
+        await page.keyboard.press('v');
+        await page.keyboard.up('Control');
+
+        await delay(3000); // Wait for sync
+
+        const finalUrl = page.url();
+        return { success: true, url: finalUrl };
+
+    } catch (error) {
+        console.error("Notion Automation Error:", error);
+        throw error;
+    } finally {
+        if (browser) await browser.close();
+    }
 }

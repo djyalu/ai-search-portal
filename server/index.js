@@ -3,9 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { runExhaustiveAnalysis } from './puppeteer_handler.js';
+import { runExhaustiveAnalysis, saveToNotion } from './puppeteer_handler.js';
 import HistoryDB from './history_db.js';
-import NotionService from './notion_service.js';
 
 dotenv.config();
 
@@ -45,7 +44,7 @@ app.delete('/api/history/:id', (req, res) => {
 app.post('/api/notion/save', async (req, res) => {
     const { prompt, summary, results } = req.body;
     try {
-        const response = await NotionService.saveAnalysis(prompt, summary, results);
+        const response = await saveToNotion(prompt, summary, results);
         res.json({ success: true, url: response.url });
     } catch (error) {
         console.error(error);
