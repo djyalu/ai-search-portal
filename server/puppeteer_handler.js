@@ -58,7 +58,14 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
 
         // We use Claude for high-quality reasoning/review if available, or Perplexity
         onProgress({ status: 'validating', message: '답변들의 논리적 모순과 누락된 정보를 비교 분석 중...' });
-        const validationReview = await runClaude(browser, validationPrompt).catch(() => "상호 검증 리포트 생성 실패");
+        // We use Claude for high-quality reasoning/review if available, or Perplexity
+        onProgress({ status: 'validating', message: '답변들의 논리적 모순과 누락된 정보를 비교 분석 중...' });
+        let validationReview = await runClaude(browser, validationPrompt).catch(() => null);
+
+        if (!validationReview || validationReview.includes("Error") || validationReview.includes("No response")) {
+            onProgress({ status: 'validating_fallback', message: 'Claude 검증 실패, Perplexity로 상호 검증을 시도합니다...' });
+            validationReview = await runPerplexity(browser, validationPrompt).catch(() => "상호 검증 리포트를 생성할 수 없습니다.");
+        }
 
         // Step 3: Final Synthesis (Optimal Answer)
         onProgress({ status: 'step3_synthesis', message: '검증 결과를 바탕으로 최적의 최종 답변과 분석 리포트를 도출하고 있습니다...' });
@@ -143,17 +150,28 @@ async function runChatGPT(browser, prompt) {
 async function runGemini(browser, prompt) {
     const page = await browser.newPage();
     try {
-        await page.goto('https://gemini.google.com/app', { waitUntil: 'load', timeout: 60000 });
-        const inputSelector = 'div[contenteditable="true"]';
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
+        await page.goto('https://gemini.google.com/app', { waitUntil: 'networkidle2', timeout: 60000 });
+        const inputSelector = 'div[contenteditable="true"], div[aria-label="채팅 입력"], .input-area textarea';
+        await page.waitForSelector(inputSelector, { timeout: 20000 });
         await page.focus(inputSelector);
         await page.keyboard.type(prompt);
         await delay(500);
         await page.keyboard.press('Enter');
-        await delay(15000);
+
+        // Wait for response to start and finish
+        await delay(3000); // Give it time to start
+        await page.waitForFunction(() => {
+            const lastResponse = document.querySelector('model-response');
+            return lastResponse && !lastResponse.classList.contains('p-is-responding');
+        }, { timeout: 45000 }).catch(() => console.log("Gemini: Wait ended or timed out"));
+
+        await delay(2000);
         return await page.evaluate(() => {
             const responses = Array.from(document.querySelectorAll('model-response'));
-            return responses.length > 0 ? responses[responses.length - 1].innerText : "No response";
+            if (responses.length === 0) return "No response found";
+            const last = responses[responses.length - 1];
+            // Remove citations or extra garbage if needed
+            return last.innerText.trim();
         });
     } finally { await page.close(); }
 }
@@ -161,17 +179,31 @@ async function runGemini(browser, prompt) {
 async function runClaude(browser, prompt) {
     const page = await browser.newPage();
     try {
-        await page.goto('https://claude.ai/new', { waitUntil: 'load', timeout: 60000 });
-        const inputSelector = 'div[contenteditable="true"]';
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
+        await page.goto('https://claude.ai/new', { waitUntil: 'networkidle2', timeout: 60000 });
+        const inputSelector = 'div[contenteditable="true"], [aria-label="Write user message"], .ProseMirror';
+        await page.waitForSelector(inputSelector, { timeout: 20000 });
         await page.focus(inputSelector);
         await page.keyboard.type(prompt);
         await delay(500);
         await page.keyboard.press('Enter');
-        await delay(15000);
+
+        // Wait for stop button to disappear or text to stabilize
+        await delay(5000);
+        await page.waitForFunction(() => {
+            const stopButton = document.querySelector('button[aria-label="Stop Response"], button[aria-label="Stop generating"]');
+            return !stopButton;
+        }, { timeout: 45000 }).catch(() => console.log("Claude: Wait for stop button timed out"));
+
+        await delay(2000);
         return await page.evaluate(() => {
-            const ClaudeMessages = Array.from(document.querySelectorAll('.font-claude-message'));
-            return ClaudeMessages.length > 0 ? ClaudeMessages[ClaudeMessages.length - 1].innerText : "No response";
+            // Claude often uses font-claude-message or specific div depth
+            const messages = Array.from(document.querySelectorAll('.font-claude-message, [data-testid="message-content"], .grid-cols-1.gap-y-4'));
+            if (messages.length === 0) {
+                // Fallback: search for the last message by text content 
+                const allBodyText = document.body.innerText;
+                return allBodyText.length > 500 ? "Claude response extraction fallback needed" : "No response found";
+            }
+            return messages[messages.length - 1].innerText.trim();
         });
     } finally { await page.close(); }
 }

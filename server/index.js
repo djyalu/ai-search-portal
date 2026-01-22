@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { runExhaustiveAnalysis } from './puppeteer_handler.js';
+import HistoryDB from './history_db.js';
+import NotionService from './notion_service.js';
 
 dotenv.config();
 
@@ -21,6 +23,36 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// REST API Routes
+app.get('/api/history', (req, res) => {
+    try {
+        const history = HistoryDB.getAll();
+        res.json(history);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch history' });
+    }
+});
+
+app.delete('/api/history/:id', (req, res) => {
+    try {
+        HistoryDB.delete(req.params.id);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete history' });
+    }
+});
+
+app.post('/api/notion/save', async (req, res) => {
+    const { prompt, summary, results } = req.body;
+    try {
+        const response = await NotionService.saveAnalysis(prompt, summary, results);
+        res.json({ success: true, url: response.url });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: error.message || 'Failed to save to Notion' });
+    }
+});
+
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
@@ -30,6 +62,10 @@ io.on('connection', (socket) => {
             const results = await runExhaustiveAnalysis(prompt, (step) => {
                 socket.emit('progress', step);
             });
+
+            // 히스토리 저장
+            HistoryDB.save(prompt, results.results, results.summary);
+
             socket.emit('completed', results);
         } catch (error) {
             console.error(error);

@@ -56,3 +56,13 @@
 - **Date**: 2026-01-23
 - **Action**: Creating `README.md` with setup and execution guides.
 - **Status**: Completed
+
+### Phase 8: History & Notion Integration
+- **Date**: 2026-01-23
+- **Action**: Implementing SQLite for search history and Notion API for exporting results.
+- **Status**: In Progress
+
+### Phase 9: Automation & Checkpoint System (Multi-Agent Workflow)
+- **Date**: 2026-01-23
+- **Action**: Implementing automated GitHub deployment and checkpointing system via Git tags.
+- **Status**: Completed
