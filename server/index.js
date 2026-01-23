@@ -68,7 +68,7 @@ io.on('connection', (socket) => {
             socket.emit('completed', results);
         } catch (error) {
             console.error(error);
-            socket.emit('error', 'Analysis failed');
+            socket.emit('error', `Analysis failed: ${error.message}`);
         }
     });
 

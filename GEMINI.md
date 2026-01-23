@@ -76,3 +76,13 @@
 - **Date**: 2026-01-23
 - **Action**: Implementing automated Notion saving via Puppeteer (simulating user actions) to bypass API key requirements.
 - **Status**: Completed
+
+### Phase 12: Stability & Error Handling Improvements
+- **Date**: 2026-01-23
+- **Action**: Refined selectors for all AI services. Improved `waitForResponseStability` to support multiple candidate selectors. Verified "Multi-Agent Agency" workflow (Gathering -> Validation -> Synthesis) through standalone functional testing.
+- **Status**: Completed
+
+### Phase 12: Stability & Error Handling Improvements
+- **Date**: 2026-01-23
+- **Action**: cleared zombie browser processes, improved error logging in server/index.js to expose detailed error messages to the client, and verified robust selector logic in puppeteer_handler.js.
+- **Status**: Completed

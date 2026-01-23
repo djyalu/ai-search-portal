@@ -13,54 +13,62 @@ const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Robust Loop-based Wait Function
- * Monitors the text content of a selector. If the length remains constant for `stabilityDuration`,
+ * Monitors the text content of candidate selectors. 
+ * If the length of the longest response remains constant for `stabilityDuration`,
  * it assumes the response is complete.
  */
-async function waitForResponseStability(page, resultSelector, minLength = 10, stabilityDuration = 3000, maxWait = 90000) {
-    let stableCount = 6; // Check count (e.g. 6 * 500ms = 3 sec)
+async function waitForResponseStability(page, selectors, minLength = 20, stabilityDuration = 3000, maxWait = 90000) {
+    let stableCount = 6; // Check count (6 * 500ms = 3 sec)
     let lastLength = 0;
-
     const startTime = Date.now();
-
-    // Initial wait for the element to appear
-    try {
-        await page.waitForSelector(resultSelector, { timeout: 20000 });
-    } catch (e) {
-        console.log(`[Wait] Selector ${resultSelector} not found within 20s.`);
-        return null;
-    }
+    const selectorArr = Array.isArray(selectors) ? selectors : [selectors];
 
     while (Date.now() - startTime < maxWait) {
-        const payload = await page.evaluate((sel) => {
-            const els = document.querySelectorAll(sel);
-            if (els.length === 0) return { length: 0, text: "" };
-            // Usually the last element is the active response
-            const target = els[els.length - 1];
-            return { length: target.innerText.length, text: target.innerText };
-        }, resultSelector);
+        const payload = await page.evaluate((sels) => {
+            let bestText = "";
+            let maxLength = 0;
+            for (const sel of sels) {
+                const els = document.querySelectorAll(sel);
+                if (els.length > 0) {
+                    const text = els[els.length - 1].innerText.trim();
+                    if (text.length > maxLength) {
+                        maxLength = text.length;
+                        bestText = text;
+                    }
+                }
+            }
+            return { length: maxLength, text: bestText };
+        }, selectorArr);
 
         if (payload.length > minLength) {
             if (payload.length === lastLength) {
                 stableCount--;
             } else {
-                stableCount = 6; // Reset if text is growing
+                stableCount = 6;
                 lastLength = payload.length;
             }
         }
 
-        if (stableCount <= 0) {
-            return payload.text; // Response is stable
-        }
-
-        await delay(500); // Poll every 500ms
+        if (stableCount <= 0) return payload.text;
+        await delay(500);
     }
 
-    console.log(`[Wait] Stability timeout for ${resultSelector}`);
-    // Return whatever we have so far
-    return await page.evaluate((sel) => {
-        const els = document.querySelectorAll(sel);
-        return els.length > 0 ? els[els.length - 1].innerText : "Timeout - Partial Response";
-    }, resultSelector);
+    console.log(`[Wait] Stability timeout for: ${selectorArr.join(', ')}`);
+    return await page.evaluate((sels) => {
+        let bestText = "";
+        let maxLength = 0;
+        for (const sel of sels) {
+            const els = document.querySelectorAll(sel);
+            if (els.length > 0) {
+                const text = els[els.length - 1].innerText.trim();
+                if (text.length > maxLength) {
+                    maxLength = text.length;
+                    bestText = text;
+                }
+            }
+        }
+        return bestText || "No response captured - Timeout";
+    }, selectorArr);
 }
 
 export async function runExhaustiveAnalysis(prompt, onProgress) {
@@ -71,14 +79,15 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
             userDataDir: USER_DATA_DIR,
             executablePath: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
             defaultViewport: null,
+            ignoreDefaultArgs: ['--enable-automation'],
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--start-maximized',
                 '--disable-blink-features=AutomationControlled',
-                '--disable-infobars'
-            ],
-            ignoreDefaultArgs: ['--enable-automation']
+                '--disable-infobars',
+                '--disable-features=IsolateOrigins,site-per-process' // Added for stability
+            ]
         });
 
         // Step 1: Initial Gathering
@@ -141,7 +150,7 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
         ${validationReview}
         `.substring(0, 15000);
 
-        const optimalAnswer = await runPerplexity(browser, synthesisPrompt).catch(() => "최종 답변 도출 실패");
+        const optimalAnswer = await runPerplexity(browser, synthesisPrompt, 120000).catch(() => "최종 답변 도출 실패");
 
         return {
             results: {
@@ -163,7 +172,7 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
     }
 }
 
-async function runPerplexity(browser, prompt) {
+async function runPerplexity(browser, prompt, maxWait = 90000) {
     const page = await browser.newPage();
     try {
         await page.goto('https://www.perplexity.ai/', { waitUntil: 'networkidle2', timeout: 60000 });
@@ -186,8 +195,8 @@ async function runPerplexity(browser, prompt) {
             return "Input Failed";
         }
 
-        // Loop wait for .prose
-        return await waitForResponseStability(page, '.prose', 20);
+        // Perplexity often uses .prose or just a specific structure
+        return await waitForResponseStability(page, ['.prose', '[class*="prose"]', '.default-article'], 50, 3000, maxWait);
 
     } finally { await page.close(); }
 }
@@ -216,10 +225,7 @@ async function runChatGPT(browser, prompt) {
             return "Input Failed";
         }
 
-        // ChatGPT often puts answer in .markdown or article
-        // Using multiple selectors to be safe
-        const resultSelector = '.markdown';
-        return await waitForResponseStability(page, resultSelector, 20);
+        return await waitForResponseStability(page, ['.markdown', 'article', '.prose'], 50);
 
     } finally { await page.close(); }
 }
@@ -244,8 +250,8 @@ async function runGemini(browser, prompt) {
             return "Input Failed";
         }
 
-        // Gemini response container
-        return await waitForResponseStability(page, 'model-response', 20);
+        // Gemini uses model-response or message-content
+        return await waitForResponseStability(page, ['model-response', '.message-content', '.chat-content'], 50);
 
     } finally { await page.close(); }
 }
@@ -278,8 +284,7 @@ async function runClaude(browser, prompt) {
             return "Input Failed";
         }
 
-        // Claude response in .font-claude-message
-        return await waitForResponseStability(page, '.font-claude-message', 20);
+        return await waitForResponseStability(page, ['.font-claude-message', '[data-testid="message-content"]', '.grid-cols-1'], 50);
 
     } finally { await page.close(); }
 }
