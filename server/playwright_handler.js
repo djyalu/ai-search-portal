@@ -179,15 +179,19 @@ async function runGemini(context, prompt) {
     const page = await context.newPage();
     try {
         await page.goto('https://gemini.google.com/app', { waitUntil: 'networkidle', timeout: 60000 });
-        const inputSelector = 'div[contenteditable="true"], .input-area textarea';
+        const inputSelector = 'div[contenteditable="true"], [aria-label="채팅 입력"], [aria-label="Prompt"], .input-area textarea';
 
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
+        await page.waitForSelector(inputSelector, { timeout: 20000 });
         await page.click(inputSelector);
-        await page.keyboard.type(prompt);
+
+        // Using type with small delay for better human-like simulation
+        await page.keyboard.type(prompt, { delay: 10 });
         await delay(500);
         await page.keyboard.press('Enter');
 
-        return await waitForResponseStability(page, ['model-response', '.message-content', '.chat-content'], 50);
+        // Wait for responding state to end
+        await delay(3000);
+        return await waitForResponseStability(page, ['model-response', '.message-content', '.chat-content', '.response-container-inner'], 50);
     } finally { await page.close(); }
 }
 
@@ -195,21 +199,23 @@ async function runClaude(context, prompt) {
     const page = await context.newPage();
     try {
         await page.goto('https://claude.ai/new', { waitUntil: 'networkidle', timeout: 60000 });
-        const inputSelector = 'div[contenteditable="true"]';
+        const inputSelector = 'div[contenteditable="true"], [aria-label="Write user message"], .ProseMirror, textarea';
 
-        await page.waitForSelector(inputSelector, { timeout: 15000 });
+        await page.waitForSelector(inputSelector, { timeout: 20000 });
         await page.click(inputSelector);
-        await page.keyboard.type(prompt);
+        await page.keyboard.type(prompt, { delay: 10 });
         await delay(500);
 
-        const sendBtn = await page.$('button[aria-label="Send Message"], button[aria-label="Send message"]');
+        const sendBtn = await page.$('button[aria-label="Send Message"], button[aria-label="Send message"], button:has-text("Send")');
         if (sendBtn && await sendBtn.isEnabled()) {
             await sendBtn.click();
         } else {
             await page.keyboard.press('Enter');
         }
 
-        return await waitForResponseStability(page, ['.font-claude-message', '[data-testid="message-content"]', '.grid-cols-1'], 50);
+        // Wait for response stability
+        await delay(5000);
+        return await waitForResponseStability(page, ['.font-claude-message', '[data-testid="message-content"]', '.grid-cols-1.gap-y-4', '.message-content'], 50);
     } finally { await page.close(); }
 }
 
