@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { runExhaustiveAnalysis, saveToNotion } from './puppeteer_handler.js';
+import { runExhaustiveAnalysis, saveToNotion } from './playwright_handler.js';
 import HistoryDB from './history_db.js';
 
 dotenv.config();

@@ -18,8 +18,11 @@ build/
 .env.test.local
 .env.production.local
 
-# Puppeteer User Data
+# Automation User Data
 server/user_data/
+server/user_data_playwright/
+server/user_data_session/
+server/history.db
 
 # Logs
 npm-debug.log*
