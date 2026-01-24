@@ -160,9 +160,9 @@ function App() {
               <div className="relative bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-[2.5rem] shadow-2xl"><Layers className="w-10 h-10 text-white" /></div>
             </div>
             <div>
-              <h1 className="text-4xl font-black tracking-tighter uppercase italic">RALPH Intelligence</h1>
+              <h1 className="text-4xl font-black tracking-tighter uppercase italic">RALPH 인텔리전스</h1>
               <div className="flex items-center gap-3 mt-1">
-                <span className="px-3 py-1 bg-indigo-500/10 text-indigo-500 text-[9px] font-black uppercase tracking-widest rounded-lg">Multi-Agent Agency v2.0</span>
+                <span className="px-3 py-1 bg-indigo-500/10 text-indigo-500 text-[9px] font-black uppercase tracking-widest rounded-lg">멀티 에이전트 에이전시 v2.0</span>
               </div>
             </div>
           </motion.div>
@@ -200,8 +200,8 @@ function App() {
           <aside className="lg:col-span-3">
             <div className="bg-white dark:bg-[#0d0d10] border-2 border-slate-100 dark:border-white/5 rounded-[3rem] p-8 h-[800px] flex flex-col shadow-2xl relative overflow-hidden">
               <div className="flex bg-slate-50 dark:bg-black/20 p-2 rounded-3xl mb-10">
-                <button onClick={() => setActiveSidebarTab('live')} className={`flex-1 py-4 rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all ${activeSidebarTab === 'live' ? 'bg-white dark:bg-[#1a1a1f] text-indigo-500 shadow-xl' : 'text-slate-400'}`}>Live Stream</button>
-                <button onClick={() => setActiveSidebarTab('history')} className={`flex-1 py-4 rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all ${activeSidebarTab === 'history' ? 'bg-white dark:bg-[#1a1a1f] text-indigo-500 shadow-xl' : 'text-slate-400'}`}>History</button>
+                <button onClick={() => setActiveSidebarTab('live')} className={`flex-1 py-4 rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all ${activeSidebarTab === 'live' ? 'bg-white dark:bg-[#1a1a1f] text-indigo-500 shadow-xl' : 'text-slate-400'}`}>실시간 스트림</button>
+                <button onClick={() => setActiveSidebarTab('history')} className={`flex-1 py-4 rounded-[1.2rem] text-[10px] font-black uppercase tracking-widest transition-all ${activeSidebarTab === 'history' ? 'bg-white dark:bg-[#1a1a1f] text-indigo-500 shadow-xl' : 'text-slate-400'}`}>분석 기록</button>
               </div>
 
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
@@ -239,10 +239,10 @@ function App() {
 
             {isAnalyzing && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-[380px]">
-                <StreamingCard title="SEARCH (Perplexity)" icon={Zap} color="sky" text={liveResults.perplexity} />
-                <StreamingCard title="REASONING (ChatGPT)" icon={Bot} color="emerald" text={liveResults.chatgpt} />
-                <StreamingCard title="CREATIVE (Gemini)" icon={Sparkles} color="indigo" text={liveResults.gemini} />
-                <StreamingCard title="LOGICAL (Claude)" icon={Brain} color="amber" text={liveResults.claude} />
+                <StreamingCard title="검색 (Perplexity)" icon={Zap} color="sky" text={liveResults.perplexity} />
+                <StreamingCard title="추론 (ChatGPT)" icon={Bot} color="emerald" text={liveResults.chatgpt} />
+                <StreamingCard title="창의 (Gemini)" icon={Sparkles} color="indigo" text={liveResults.gemini} />
+                <StreamingCard title="논리 (Claude)" icon={Brain} color="amber" text={liveResults.claude} />
               </div>
             )}
 
@@ -258,7 +258,7 @@ function App() {
                     ))}
                   </div>
                   <button onClick={handleSaveToNotion} className="px-10 py-5 bg-black dark:bg-white text-white dark:text-black rounded-3xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl flex items-center gap-4 hover:scale-105 active:scale-95 transition-all">
-                    {isNotionSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />} Notion Export
+                    {isNotionSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />} 노션으로 내보내기
                   </button>
                 </div>
 
@@ -274,7 +274,7 @@ function App() {
                         <motion.div key="ind" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid grid-cols-1 md:grid-cols-2 gap-8">
                           {Object.entries(results.results || {}).map(([k, v]) => (
                             <div key={k} className="p-8 bg-slate-50 dark:bg-white/5 rounded-[2.5rem] border border-slate-100 dark:border-white/10">
-                              <h3 className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-4 border-b pb-2">{k} AGENT RESPONSE</h3>
+                              <h3 className="text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-4 border-b pb-2">{k} 에이전트 응답</h3>
                               <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{v || "데이터 수집 실패"}</p>
                             </div>
                           ))}
@@ -296,8 +296,8 @@ function App() {
                 <div className="absolute inset-0 bg-indigo-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-1000 blur-[100px]"></div>
                 <motion.div animate={{ y: [0, -15, 0] }} transition={{ duration: 5, repeat: Infinity }}><Bot className="w-40 h-40 opacity-5 group-hover:opacity-10 transition-opacity" /></motion.div>
                 <div className="text-center space-y-4">
-                  <p className="text-[11px] font-black uppercase tracking-[0.6em] text-slate-300">RALPH Network Standby</p>
-                  <p className="text-xs font-bold text-slate-400 italic">Advanced Agentic Coding Intelligence Ready</p>
+                  <p className="text-[11px] font-black uppercase tracking-[0.6em] text-slate-300">RALPH 네트워크 대기 중</p>
+                  <p className="text-xs font-bold text-slate-400 italic">고급 에이전틱 분석 지능 준비 완료</p>
                 </div>
               </div>
             )}

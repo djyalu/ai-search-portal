@@ -64,7 +64,7 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
 
         // --- 1. Reasoning Phase (R) ---
         onProgress({ status: 'reasoning', message: '[Reasoning] 질의 의도 분석 및 에이전트 작업 설계 중...' });
-        const planningPrompt = `질문: "${prompt}"\n위 질문을 가장 효과적으로 분석하기 위해, 4개의 AI(Search, Reasoning, Creative, Logical)에게 각각 어떤 관점으로 질문하면 좋을지 전략을 세워줘. 아주 간단하게 요약해.`;
+        const planningPrompt = `질문: "${prompt}"\n위 질문을 가장 효과적으로 분석하기 위해, 4개의 AI(Search, Reasoning, Creative, Logical)에게 각각 어떤 관점으로 질문하면 좋을지 전략을 세워줘. 아주 간단하게 요약해. 모든 답변은 반드시 한국어로 작성해라.`;
 
         const planningPage = await browserContext.newPage();
         let strategy = "기본 분석 모드";
@@ -169,7 +169,7 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
 
         // --- 3. Logic Phase (L) ---
         onProgress({ status: 'logic_validation', message: '[Logic] 수집된 답변의 교차 검증 및 논리적 모순 체크 중...' });
-        const validationPrompt = `분석 결과들:\n${JSON.stringify(rawData)}\n위 내용 중 서로 충돌하거나 보완이 필요한 부분을 냉철하게 평가해줘.`;
+        const validationPrompt = `분석 결과들:\n${JSON.stringify(rawData)}\n위 내용 중 서로 충돌하거나 보완이 필요한 부분을 냉철하게 평가해줘. 모든 답변은 반드시 한국어로 작성해라.`;
 
         const logicPage = await browserContext.newPage();
         let validationReport = "검증 진행됨";
@@ -192,7 +192,7 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
 
         // --- 4. Polish & Hierarchy Phase (P/H) ---
         onProgress({ status: 'polish_synthesis', message: '[Polish] 최종 인텔리전스 인포그래픽 리포트 생성 중...' });
-        const finalPrompt = `질문: "${prompt}"\n수집 데이터: ${JSON.stringify(rawData)}\n검증 보고서: ${validationReport}\n위 모든 내용을 종합하여 완벽한 마크다운 보고서를 작성해줘.`;
+        const finalPrompt = `질문: "${prompt}"\n수집 데이터: ${JSON.stringify(rawData)}\n검증 보고서: ${validationReport}\n위 모든 내용을 종합하여 완벽한 마크다운 보고서를 작성해줘. 모든 답변은 반드시 한국어로 작성해라.`;
 
         const finalPage = await browserContext.newPage();
         let finalOutput = "최종 요약 실패";

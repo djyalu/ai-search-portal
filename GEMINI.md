@@ -101,3 +101,8 @@
 - **Date**: 2026-01-24
 - **Action**: Implemented global analysis locking in `index.js` to prevent race conditions. Enhanced Notion export in `notion_service.js` with content chunking for long texts. Refined `playwright_handler.js` with robust selectors, better timeout handling, and improved resource cleanup logic.
 - **Status**: Completed
+
+### Phase 17: 기본 언어 한국어 설정 및 UI 한국어화
+- **Date**: 2026-01-24
+- **Action**: AI 에이전트 프롬프트에 한국어 답변 강제 지침 추가 및 클라이언트 UI 주요 텍스트 한국어화 완료.
+- **Status**: Completed
