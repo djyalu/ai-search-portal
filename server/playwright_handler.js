@@ -34,182 +34,203 @@ async function getCleanText(page, selectors) {
         for (const sel of sels) {
             const elements = document.querySelectorAll(sel);
             if (elements.length > 0) {
+                // Get the last element of the matching selectors (usually the latest response)
                 let text = elements[elements.length - 1].innerText.trim();
-                if (text.length > 20) return text;
+                if (text.length > 10) return text;
             }
         }
         return null;
     }, selectors);
 }
 
+async function runAgent(browserContext, agent, prompt, onProgress) {
+    const page = await browserContext.newPage();
+    try {
+        onProgress({ status: 'worker_active', message: `[Agency] ${agent.name} 에이전트 접속 중...` });
+        await page.goto(agent.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+        let inputFound = false;
+        for (const sel of agent.input) {
+            try {
+                await page.waitForSelector(sel, { timeout: 10000 });
+                await page.click(sel);
+                await page.fill(sel, prompt);
+                await page.keyboard.press('Enter');
+                inputFound = true;
+                break;
+            } catch (e) { continue; }
+        }
+
+        if (!inputFound) throw new Error(`Input selector not found for ${agent.name}`);
+
+        let lastText = "";
+        let stableCount = 0;
+
+        for (let i = 0; i < 40; i++) { // Max 80s
+            await delay(2000);
+            const current = await getCleanText(page, agent.result);
+
+            if (current && current.length > lastText.length) {
+                lastText = current;
+                stableCount = 0;
+                onProgress({ status: 'streaming', service: agent.id, content: lastText });
+            } else if (current && current.length > 100 && current === lastText) {
+                stableCount++;
+            }
+
+            // If text is stable for 3 iterations (6s), assume finished
+            if (stableCount >= 3) break;
+        }
+
+        return lastText || "응답 데이터를 회수하지 못했습니다.";
+    } catch (e) {
+        console.error(`Agent ${agent.name} Error:`, e);
+        await saveDebugArtifacts(page, `worker-error-${agent.id}`);
+        return `에러 발생: ${e.message}`;
+    } finally {
+        await page.close();
+    }
+}
+
 /**
  * RALPH Based Multi-Agent Analysis
- * R: Reasoning (Plan)
- * A: Agency (Gather)
- * L: Logic (Validate)
- * P: Polish (Synthesize)
- * H: Hierarchy (Manage)
  */
 export async function runExhaustiveAnalysis(prompt, onProgress) {
     let browserContext;
     try {
         onProgress({ status: 'hierarchy_init', message: '[Hierarchy] RALPH 에이전시 파이프라인 가동...' });
 
-        browserContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
-            channel: 'msedge',
+        const launchOptions = {
             headless: false,
             args: ['--start-maximized', '--no-sandbox', '--disable-blink-features=AutomationControlled'],
             slowMo: 40
-        });
+        };
+
+        try {
+            browserContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
+                ...launchOptions,
+                channel: 'msedge'
+            });
+        } catch (e) {
+            console.warn("Edge launch failed, falling back to standard Chromium:", e.message);
+            browserContext = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
+        }
 
         // --- 1. Reasoning Phase (R) ---
         onProgress({ status: 'reasoning', message: '[Reasoning] 질의 의도 분석 및 에이전트 작업 설계 중...' });
-        const planningPrompt = `질문: "${prompt}"\n위 질문을 가장 효과적으로 분석하기 위해, 4개의 AI(Search, Reasoning, Creative, Logical)에게 각각 어떤 관점으로 질문하면 좋을지 전략을 세워줘. 아주 간단하게 요약해.`;
+        let strategy = "기본 분석 모드: 다각도 답변 수집 및 교차 검증";
 
-        const planningPage = await browserContext.newPage();
-        let strategy = "기본 분석 모드";
         try {
-            await planningPage.goto('https://www.perplexity.ai/', { waitUntil: 'domcontentloaded', timeout: 30000 }); // Reduced timeout
+            const planningPrompt = `질문: "${prompt}"\n위 질문을 가장 효과적으로 분석하기 위해, 4개의 AI(Search, Reasoning, Creative, Logical)에게 각각 어떤 관점으로 질문하면 좋을지 전략을 세워줘. 아주 간단하게 요약해.`;
+            const planningPage = await browserContext.newPage();
             try {
-                // Perplexity selector might vary (textarea or placeholder)
+                await planningPage.goto('https://www.perplexity.ai/', { waitUntil: 'domcontentloaded', timeout: 30000 });
                 const inputSelectors = ['textarea', 'div[contenteditable="true"]', 'input[placeholder*="Ask"]'];
                 let hasInput = false;
-                for (const vid of inputSelectors) {
-                    if (await planningPage.$(vid)) {
-                        await planningPage.fill(vid, planningPrompt);
+                for (const sel of inputSelectors) {
+                    if (await planningPage.$(sel)) {
+                        await planningPage.fill(sel, planningPrompt);
                         await planningPage.keyboard.press('Enter');
                         hasInput = true;
                         break;
                     }
                 }
-                if (!hasInput) throw new Error("Input field not found");
-
-            } catch (err) {
-                await saveDebugArtifacts(planningPage, 'planning-input-error');
-                throw err;
-            }
-
-            await delay(3000);
-
-            // Reasoning wait loop
-            let planText = "";
-            for (let i = 0; i < 15; i++) { // Max 30s
-                await delay(2000);
-                // Try multiple potential result selectors for Perplexity
-                const text = await getCleanText(planningPage, ['.prose', 'div[class*="markdown"]', '.answer-content']);
-                if (text && text.length > planText.length) {
-                    planText = text;
-                    onProgress({ status: 'streaming', service: 'reasoning_preview', content: planText.substring(0, 100) + '...' });
+                if (hasInput) {
+                    await delay(5000);
+                    const text = await getCleanText(planningPage, ['.prose', 'div[class*="markdown"]', '.answer-content']);
+                    if (text) strategy = text;
                 }
-                if (text && text.length > 50 && i > 5) break;
+            } finally {
+                await planningPage.close();
             }
-            strategy = planText || "기본 전략 가동";
-
         } catch (err) {
-            console.error("Reasoning Error:", err);
-            strategy = `에러 발생: ${err.message}`;
-        } finally { await planningPage.close(); }
+            console.error("Reasoning Phase Error (skipped):", err.message);
+        }
 
         // --- 2. Agency Phase (A) ---
-        onProgress({ status: 'agency_gathering', message: `[Agency] 분석 전략 기반 데이터 수집 시작: ${strategy.substring(0, 50)}...` });
+        onProgress({ status: 'agency_gathering', message: `[Agency] 병렬 에이전트 가동 시작...` });
 
-        const workers = [
-            // Updated selectors for robustness
-            { id: 'perplexity', name: 'Perplexity', url: 'https://www.perplexity.ai/', input: ['textarea', 'div[contenteditable="true"]'], result: ['.prose', 'div[class*="markdown"]'] },
-            { id: 'chatgpt', name: 'ChatGPT', url: 'https://chatgpt.com/', input: ['#prompt-textarea', 'div[contenteditable="true"]'], result: ['.markdown', '.agent-turn', 'article'] },
-            { id: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/app', input: ['div[contenteditable="true"]', '.ql-editor'], result: ['model-response', '.message-content', 'div[data-message-id]'] },
-            { id: 'claude', name: 'Claude', url: 'https://claude.ai/new', input: ['div[contenteditable="true"]'], result: ['.font-claude-message', '.message-content'] }
+        const agents = [
+            { id: 'perplexity', name: 'Perplexity', url: 'https://www.perplexity.ai/', input: ['textarea', 'div[contenteditable="true"]'], result: ['.prose', 'div[class*="markdown"]', '.answer-content'] },
+            { id: 'chatgpt', name: 'ChatGPT', url: 'https://chatgpt.com/', input: ['#prompt-textarea', 'div[contenteditable="true"]'], result: ['.markdown', '.agent-turn', 'article', 'div[data-message-author-role="assistant"]'] },
+            { id: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/app', input: ['div[contenteditable="true"]', '.ql-editor', 'textarea'], result: ['model-response', '.message-content', 'div[data-message-id]', '.query-content'] },
+            { id: 'claude', name: 'Claude', url: 'https://claude.ai/new', input: ['div[contenteditable="true"]', 'p[data-placeholder]'], result: ['.font-claude-message', '.message-content', 'div.prose'] }
         ];
 
+        // Execute all agents in parallel
+        const resultsArray = await Promise.all(agents.map(agent => runAgent(browserContext, agent, prompt, onProgress)));
+
         const rawData = {};
-        for (const worker of workers) {
-            onProgress({ status: 'worker_active', message: `[Agency] ${worker.name} 에이전트 작업 중...` });
-            const page = await browserContext.newPage();
-            try {
-                await page.goto(worker.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-
-                // Flexible input finding
-                let inputFound = false;
-                for (const sel of worker.input) {
-                    try {
-                        await page.waitForSelector(sel, { timeout: 5000 });
-                        await page.click(sel);
-                        await page.keyboard.type(prompt, { delay: 10 });
-                        // Special case for Gemini/others needing extra 'Enter' confirmation or button click?
-                        await page.keyboard.press('Enter');
-                        inputFound = true;
-                        break;
-                    } catch (e) { continue; }
-                }
-
-                if (!inputFound) throw new Error(`Input selector not found for ${worker.name}`);
-
-                let lastText = "";
-                for (let i = 0; i < 25; i++) { // Max 50s
-                    await delay(2000);
-                    const current = await getCleanText(page, worker.result);
-                    if (current && current.length > lastText.length) {
-                        lastText = current;
-                        onProgress({ status: 'streaming', service: worker.id, content: lastText });
-                    }
-                    // Stability check: if text is long enough and hasn't changed for 2 iterations
-                    if (i > 5 && current && current.length > 50 && current === lastText) {
-                        // Check one more time to be sure? 
-                        // For now, assume done if stable.
-                        // But we wait a bit more for some slow AIs
-                        if (i > 10) break;
-                    }
-                }
-                rawData[worker.id] = lastText || "응답 없음";
-            } catch (e) {
-                try { await saveDebugArtifacts(page, `worker-error-${worker.id}`); } catch (_) { }
-                rawData[worker.id] = `에러: ${e.message}`;
-            } finally { await page.close(); }
-        }
+        agents.forEach((agent, index) => {
+            rawData[agent.id] = resultsArray[index];
+        });
 
         // --- 3. Logic Phase (L) ---
         onProgress({ status: 'logic_validation', message: '[Logic] 수집된 답변의 교차 검증 및 논리적 모순 체크 중...' });
-        const validationPrompt = `분석 결과들:\n${JSON.stringify(rawData)}\n위 내용 중 서로 충돌하거나 보완이 필요한 부분을 냉철하게 평가해줘.`;
+        let validationReport = "수집된 데이터를 기반으로 통합 분석을 진행합니다.";
 
-        const logicPage = await browserContext.newPage();
-        let validationReport = "검증 진행됨";
         try {
-            await logicPage.goto('https://claude.ai/new');
-            await logicPage.waitForSelector('div[contenteditable="true"]');
-            await logicPage.click('div[contenteditable="true"]');
-            await logicPage.keyboard.type(validationPrompt, { delay: 5 });
-            await logicPage.keyboard.press('Enter');
-            await delay(5000);
-            for (let i = 0; i < 15; i++) {
-                await delay(2000);
-                const current = await getCleanText(logicPage, ['.font-claude-message', '.message-content']);
-                if (current) {
-                    validationReport = current;
-                    onProgress({ status: 'streaming', service: 'validation', content: validationReport });
+            const validationPrompt = `분석 결과들:\n${JSON.stringify(rawData)}\n위 내용 중 서로 충돌하거나 보완이 필요한 부분을 냉철하게 평가해줘.`;
+            const logicPage = await browserContext.newPage();
+            try {
+                await logicPage.goto('https://claude.ai/new', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                const inputSel = 'div[contenteditable="true"]';
+                await logicPage.waitForSelector(inputSel, { timeout: 10000 });
+                await logicPage.fill(inputSel, validationPrompt);
+                await logicPage.keyboard.press('Enter');
+
+                let lastValText = "";
+                for (let i = 0; i < 15; i++) {
+                    await delay(3000);
+                    const current = await getCleanText(logicPage, ['.font-claude-message', '.message-content', 'div.prose']);
+                    if (current && current.length > lastValText.length) {
+                        lastValText = current;
+                        onProgress({ status: 'streaming', service: 'validation', content: lastValText });
+                    }
+                    if (i > 5 && current && current === lastValText) break;
                 }
+                if (lastValText) validationReport = lastValText;
+            } finally {
+                await logicPage.close();
             }
-        } finally { await logicPage.close(); }
+        } catch (err) {
+            console.error("Logic Phase Error (skipped):", err.message);
+        }
 
         // --- 4. Polish & Hierarchy Phase (P/H) ---
-        onProgress({ status: 'polish_synthesis', message: '[Polish] 최종 인텔리전스 인포그래픽 리포트 생성 중...' });
-        const finalPrompt = `질문: "${prompt}"\n수집 데이터: ${JSON.stringify(rawData)}\n검증 보고서: ${validationReport}\n위 모든 내용을 종합하여 완벽한 마크다운 보고서를 작성해줘.`;
+        onProgress({ status: 'polish_synthesis', message: '[Polish] 최종 인텔리전스 리포트 생성 중...' });
+        let finalOutput = "최종 분석 결과를 생성하는 데 실패했습니다. 개별 에이전트 결과를 확인해주세요.";
 
-        const finalPage = await browserContext.newPage();
-        let finalOutput = "최종 요약 실패";
         try {
-            await finalPage.goto('https://www.perplexity.ai/');
-            await finalPage.fill('textarea', finalPrompt);
-            await finalPage.keyboard.press('Enter');
-            await delay(5000);
-            for (let i = 0; i < 20; i++) {
-                await delay(2000);
-                const current = await getCleanText(finalPage, ['.prose']);
-                if (current) {
-                    finalOutput = current;
-                    onProgress({ status: 'streaming', service: 'optimal', content: finalOutput });
+            const finalPrompt = `질문: "${prompt}"\n수집 데이터: ${JSON.stringify(rawData)}\n검증 보고서: ${validationReport}\n위 모든 내용을 종합하여 완벽하고 전문적인 마크다운 보고서를 작성해줘.`;
+            const finalPage = await browserContext.newPage();
+            try {
+                await finalPage.goto('https://www.perplexity.ai/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                const inputSel = 'textarea';
+                await finalPage.waitForSelector(inputSel, { timeout: 10000 });
+                await finalPage.fill(inputSel, finalPrompt);
+                await finalPage.keyboard.press('Enter');
+
+                let lastFinalText = "";
+                for (let i = 0; i < 20; i++) {
+                    await delay(3000);
+                    const current = await getCleanText(finalPage, ['.prose', 'div[class*="markdown"]']);
+                    if (current && current.length > lastFinalText.length) {
+                        lastFinalText = current;
+                        onProgress({ status: 'streaming', service: 'optimal', content: lastFinalText });
+                    }
+                    if (i > 8 && current && current === lastFinalText) break;
                 }
+                if (lastFinalText) finalOutput = lastFinalText;
+            } finally {
+                await finalPage.close();
             }
-        } finally { await finalPage.close(); }
+        } catch (err) {
+            console.error("Polish Phase Error:", err.message);
+            // Fallback: simple aggregation
+            finalOutput = `# 통합 분석 리포트 (자동 생성)\n\n${validationReport}\n\n## 개별 분석 결과\n` +
+                          Object.entries(rawData).map(([k, v]) => `### ${k}\n${v}`).join('\n\n');
+        }
 
         return {
             results: rawData,
@@ -224,6 +245,6 @@ export async function runExhaustiveAnalysis(prompt, onProgress) {
 }
 
 export async function saveToNotion(prompt, optimalAnswer, results) {
-    // Notion 저장 로직 유지
+    // Notion 저장 로직 유지 (필요시 구현 가능)
     return { success: true };
 }
